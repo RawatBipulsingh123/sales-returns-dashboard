@@ -407,7 +407,7 @@ if dropped_rows > 0:
     st.info(f"ℹ️ {dropped_rows:,} row(s) were excluded due to missing or invalid dates.")
 
 years = sorted(df_processed["Year"].unique().tolist())
-tab_labels = [str(y) for y in years] + ["Overall", "🔨 Custom Visualizations", "📦 Stock vs Sales"]
+tab_labels = [str(y) for y in years] + ["Overall", "🔍 Item Search", "🔨 Custom Visualizations", "📦 Stock vs Sales"]
 tabs = st.tabs(tab_labels)
 
 excel_aggregation_data = {}
@@ -427,9 +427,139 @@ with tabs[len(years)]:
     excel_aggregation_data["Overall"] = render_aggregation_section(df_processed, "overall")
 
 # --------------------------------------------------------------------------
-# Custom Visualizations Tab
+# --------------------------------------------------------------------------
+# Item Search & Deep Dive Tab (Master Search Engine)
 # --------------------------------------------------------------------------
 with tabs[len(years) + 1]:
+    st.markdown("### 🔍 Master Search & Ledger")
+    st.caption("Filter by Date, Store, or Item to dynamically view sales history and current stock.")
+
+    search_df = df_processed.copy()
+    search_df["EANCode"] = search_df["EANCode"].astype(str).str.strip()
+    
+    if "Date" in search_df.columns:
+        search_df["Date"] = pd.to_datetime(search_df["Date"], errors='coerce')
+        min_dt = search_df["Date"].min()
+        max_dt = search_df["Date"].max()
+    else:
+        min_dt, max_dt = None, None
+
+    # --- TOP ROW: GLOBAL DATE & STORE FILTERS ---
+    f_row1_1, f_row1_2 = st.columns(2)
+    with f_row1_1:
+        if pd.notnull(min_dt) and pd.notnull(max_dt):
+            sel_dates = st.date_input(
+                "📅 Global Date Filter", 
+                value=[], # Empty by default to show all-time data
+                min_value=min_dt.date(), 
+                max_value=max_dt.date(), 
+                key="top_date"
+            )
+            if len(sel_dates) == 2:
+                search_df = search_df[(search_df["Date"].dt.date >= sel_dates[0]) & (search_df["Date"].dt.date <= sel_dates[1])]
+            elif len(sel_dates) == 1:
+                search_df = search_df[search_df["Date"].dt.date == sel_dates[0]]
+        else:
+            st.info("No valid dates found in dataset.")
+            
+    with f_row1_2:
+        store_list = sorted(search_df["Store Name"].dropna().unique().tolist())
+        s_store = st.multiselect("🏬 Global Store Filter", store_list, key="top_store")
+        if s_store:
+            search_df = search_df[search_df["Store Name"].isin(s_store)]
+
+    # --- BOTTOM ROW: ITEM-SPECIFIC FILTERS ---
+    f_row2_1, f_row2_2, f_row2_3, f_row2_4 = st.columns(4)
+    with f_row2_1:
+        ean_list = ["All"] + sorted(search_df["EANCode"].dropna().unique().tolist())
+        s_ean = st.selectbox("Barcode / EAN", ean_list, key="top_ean")
+        if s_ean != "All": search_df = search_df[search_df["EANCode"] == s_ean]
+        
+    with f_row2_2:
+        prod_list = ["All"] + sorted(search_df["Product"].dropna().unique().tolist())
+        s_prod = st.selectbox("Product Name", prod_list, key="top_prod")
+        if s_prod != "All": search_df = search_df[search_df["Product"] == s_prod]
+        
+    with f_row2_3:
+        color_list = ["All"] + sorted(search_df["Color"].dropna().unique().tolist())
+        s_col = st.selectbox("Color", color_list, key="top_col")
+        if s_col != "All": search_df = search_df[search_df["Color"] == s_col]
+        
+    with f_row2_4:
+        size_list = ["All"] + sorted(search_df["Size"].dropna().unique().tolist())
+        s_size = st.selectbox("Size", size_list, key="top_size")
+        if s_size != "All": search_df = search_df[search_df["Size"] == s_size]
+
+    st.divider()
+    
+    st.markdown("#### 📊 Sales Snapshot for Current Filters")
+    render_kpis(search_df)
+    
+    c_left, c_right = st.columns(2)
+    with c_left:
+        st.markdown("#### 🏬 Products Sold (Store-Wise)")
+        if not search_df.empty:
+            # Added EAN and Product to this table so you know exactly what sold
+            prod_agg = search_df.groupby(["Store Name", "Product", "EANCode"], as_index=False)["Quantity"].sum()
+            prod_agg = prod_agg[prod_agg["Quantity"] != 0].sort_values(by=["Store Name", "Quantity"], ascending=[True, False])
+            prod_agg = prod_agg.rename(columns={"Quantity": "Total Units Sold"})
+            st.dataframe(prod_agg.reset_index(drop=True), use_container_width=True)
+        else:
+            st.warning("No sales found for these filters.")
+            
+    with c_right:
+        st.markdown("#### 📦 Current Stock Location")
+        if stock_file is not None:
+            try:
+                import io
+                file_bytes = stock_file.getvalue()
+                
+                if stock_file.name.endswith('.csv'):
+                    df_stock_search = pd.read_csv(io.BytesIO(file_bytes), skiprows=6, low_memory=False)
+                else:
+                    df_stock_search = pd.read_excel(io.BytesIO(file_bytes), skiprows=6)
+                
+                if all(col in df_stock_search.columns for col in ["EANCode", "StoreName", "StockInHand"]):
+                    df_stock_search["EANCode"] = df_stock_search["EANCode"].astype(str).str.strip()
+                    search_eans = search_df["EANCode"].unique().tolist()
+                    stock_filtered = df_stock_search[df_stock_search["EANCode"].isin(search_eans)]
+                    
+                    if stock_filtered.empty:
+                        st.warning("No inventory found for the filtered items in the uploaded Stock file.")
+                    else:
+                        # Automatically sync the stock display with the Top Store Filter
+                        if s_store:
+                            stock_filtered = stock_filtered[stock_filtered["StoreName"].isin(s_store)]
+                            
+                        stock_agg = stock_filtered.groupby(["StoreName", "ProductName"], as_index=False)["StockInHand"].sum()
+                        stock_agg = stock_agg.rename(columns={"StoreName": "Store", "ProductName": "Product", "StockInHand": "Units Available"})
+                        st.dataframe(stock_agg.sort_values("Units Available", ascending=False).reset_index(drop=True), use_container_width=True)
+                else:
+                    st.warning("⚠️ Stock file is missing EANCode, StoreName, or StockInHand columns.")
+            except Exception as e:
+                st.error(f"❌ Error loading stock file: {e}")
+        else:
+            st.info("Upload the Stock file in the sidebar to see live inventory locations.")
+    
+    # --- DYNAMIC TRANSACTION LEDGER ---
+    st.divider()
+    st.markdown("#### 📅 Detailed Transaction Ledger")
+    
+    if not search_df.empty and "Date" in search_df.columns:
+        # Extracted Product and EAN into the ledger view
+        ledger_df = search_df[["Date", "Store Name", "Product", "EANCode", "Quantity"]].copy()
+        
+        ledger_df = ledger_df.sort_values(by="Date", ascending=False)
+        ledger_df["Date"] = ledger_df["Date"].dt.strftime('%d-%m-%Y')
+        ledger_df = ledger_df.rename(columns={"Date": "Bill Date", "Store Name": "Sold At Store", "Quantity": "Units Sold"})
+        
+        st.dataframe(ledger_df.reset_index(drop=True), use_container_width=True)
+    else:
+        st.info("No transaction data available for this selection.")
+# --------------------------------------------------------------------------
+# Custom Visualizations Tab
+# --------------------------------------------------------------------------
+with tabs[len(years) + 2]:
     st.markdown("### 🔧 Build Your Own Visualizations")
     st.caption("Apply global filters first, then build up to two side-by-side charts.")
 
