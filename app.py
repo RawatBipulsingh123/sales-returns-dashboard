@@ -407,7 +407,7 @@ if dropped_rows > 0:
     st.info(f"ℹ️ {dropped_rows:,} row(s) were excluded due to missing or invalid dates.")
 
 years = sorted(df_processed["Year"].unique().tolist())
-tab_labels = [str(y) for y in years] + ["Overall", "🔍 Item Search", "🔨 Custom Visualizations", "📦 Stock vs Sales"]
+tab_labels = [str(y) for y in years] + ["Overall", "🔍 Item Search", "🔨 Custom Visualizations", "📦 Stock vs Sales", "📈 Day Trends"]
 tabs = st.tabs(tab_labels)
 
 excel_aggregation_data = {}
@@ -703,11 +703,31 @@ with tabs[-1]:
         st.info("👈 Please upload the Stock Data (CSV/Excel) in the sidebar to unlock this analysis.")
     else:
         try:
-            # 1. Load & Clean Stock Data
+            # 1. Smart Load & Clean Stock Data (Handles both Regular & EC Formats)
             if stock_file.name.endswith('.csv'):
                 df_stock_raw = pd.read_csv(stock_file, skiprows=6, low_memory=False)
             else:
                 df_stock_raw = pd.read_excel(stock_file, skiprows=6)
+                
+            # Agar skiprows=6 lagane se data corrupt hua (yani EC File hai), toh reset karke normal read kar
+            if "StoreName" not in df_stock_raw.columns and "StockInHand" not in df_stock_raw.columns:
+                stock_file.seek(0)
+                if stock_file.name.endswith('.csv'):
+                    df_stock_raw = pd.read_csv(stock_file, low_memory=False)
+                else:
+                    df_stock_raw = pd.read_excel(stock_file)
+
+            # EC columns ko Regular columns mein standardise karna
+            col_map = {
+                "Eancode": "EANCode",
+                "Productname": "ProductName",
+                "Stock Qty. ": "StockInHand",
+                "Stock Qty.": "StockInHand",
+                "Storename": "StoreName",
+                "Color": "ColorName",
+                "Size": "SizeName"
+            }
+            df_stock_raw.rename(columns=col_map, inplace=True)
             
             stock_base_cols = ["EANCode", "StoreName", "StockInHand"]
             missing = [c for c in stock_base_cols if c not in df_stock_raw.columns]
@@ -746,10 +766,26 @@ with tabs[-1]:
                 df_processed["Store Name"] = df_processed["Store Name"].astype(str).str.upper().str.strip()
                 df_stock["Store Name"] = df_stock["Store Name"].astype(str).str.upper().str.strip()
             
-                # ---------------------------------------------------------
-                # UI Filters (Year, Product, Stores)
-                # ---------------------------------------------------------
+              
+               # ---------------------------------------------------------
+               # ---------------------------------------------------------
+            # UI Filters (Year, Product, Stores)
+                
                 st.markdown("##### 🔍 Apply Filters")
+                import re
+                def standardize_store_name(name):
+                    name = str(name).strip()
+                    name = re.sub(r'^Ethnicity\s*-\s*', 'ET - ', name, flags=re.IGNORECASE)
+                    name = re.sub(r'^EC\s*-\s*', 'ET - ', name, flags=re.IGNORECASE)
+                    name = re.sub(r'\s*\(?2\)?$', '', name).strip()
+                    return name
+            
+
+                
+                # Apply Standardization to Sales data too
+                df_processed["Store Name"] = df_processed["Store Name"].apply(standardize_store_name)
+                
+                search_mode = st.radio("Search By:", ["Product Name", "EAN Code"], horizontal=True)
                 
                 col1, col2 = st.columns(2)
                 df_processed["Date"] = pd.to_datetime(df_processed["Date"], errors='coerce')
@@ -759,18 +795,22 @@ with tabs[-1]:
                 with col1:
                     selected_year = st.selectbox("📅 Select Year", available_years)
                 
-                available_products = sorted(df_processed["Product"].dropna().unique().tolist())
                 with col2:
-                    selected_product = st.selectbox("👕 Select Product", available_products)
+                    if search_mode == "Product Name":
+                        available_options = ["All"] + sorted(df_processed["Product"].dropna().unique().tolist())
+                        selected_item = st.selectbox("👕 Select Product (Type to Search)", available_options)
+                    else:
+                        available_options = sorted(df_processed["EANCode"].dropna().astype(str).unique().tolist())
+                        selected_item = st.selectbox("🏷️ Select EAN Code (Type to Search)", available_options)
                 
                 col3, col4 = st.columns([3, 1])
                 with col3:
                     available_stores = sorted(df_processed["Store Name"].dropna().unique().tolist())
                     target_defaults = [
-                        "VIVIANA THANE STORE", "SEAWOOD GRAND CENTRAL MALL", 
-                        "PANVEL ORION MALL", "AHMEDABAD ONE", 
-                        "RM BORIVALI", "THE CAPITAL MALL VASAI", 
-                        "RM VADODARA", "RM UDHANA"
+                        "ET - ELPRO MALL PUNE", "ET - SEAWOOD GRAND CENTRAL MALL", 
+                        "ET - PANVEL ORION MALL", "ET - AHMEDABAD ONE", 
+                        "ET - RM BORIVALI", "ET - THE CAPITAL MALL VASAI", 
+                        "ET - RM VADODARA", "ET - RM UDHANA"
                     ]
                     default_stores = [s for s in target_defaults if s in available_stores]
                     selected_stores = st.multiselect("🏬 Select Stores to Analyze", available_stores, default=default_stores)
@@ -782,19 +822,27 @@ with tabs[-1]:
                 st.divider()
 
                 # 3. Apply Filters to Sales & Stock
-                all_product_sales = df_processed[df_processed["Product"] == selected_product].copy()
+                if search_mode == "Product Name":
+                    if selected_item == "All":
+                        all_product_sales = df_processed.copy()
+                        filtered_stock = df_stock.copy()
+                    else:
+                        all_product_sales = df_processed[df_processed["Product"] == selected_item].copy()
+                        filtered_stock = df_stock[df_stock["Product"].astype(str).str.strip().str.upper() == str(selected_item).strip().upper()].copy()
+                else:
+                    all_product_sales = df_processed[df_processed["EANCode"].astype(str).str.strip() == str(selected_item).strip()].copy()
+                    filtered_stock = df_stock[df_stock["EANCode"].astype(str).str.strip().str.upper() == str(selected_item).strip().upper()].copy()
+                
                 filtered_sales = all_product_sales.copy()
                 
                 if selected_year != "Overall":
                     filtered_sales = filtered_sales[filtered_sales["Year"] == selected_year]
+                
                 if selected_stores:
                     filtered_sales = filtered_sales[filtered_sales["Store Name"].isin(selected_stores)]
-                
-                target_eans = all_product_sales["EANCode"].unique().tolist()
-                filtered_stock = df_stock[df_stock["EANCode"].isin(target_eans)].copy()
-                
-                if selected_stores:
                     filtered_stock = filtered_stock[filtered_stock["Store Name"].isin(selected_stores)]
+                    
+                st.success(f"✅ Analytics for **{selected_item}** | Year: **{selected_year}** | Stores: **{len(selected_stores)} Selected**")
                 
                 # Standardize Color and Size strings to prevent split rows (e.g. 'Red' vs 'RED')
                 for col in ["Color", "Size"]:
@@ -830,8 +878,7 @@ with tabs[-1]:
                         final = final.drop(columns=["Send Qty", "Percentage"])
                     return final
 
-                st.success(f"✅ Analytics for **{selected_product}** | Year: **{selected_year}** | Stores: **{len(selected_stores)} Selected**")
-
+                st.success(f"✅ Analytics for **{selected_item}** | Year: **{selected_year}** | Stores: **{len(selected_stores)} Selected**")
                 # 4. Render 3 Separate Tables automatically
                 st.markdown("#### 🏢 Store-wise Summary")
                 df_store = generate_table(filtered_sales, filtered_stock, "Store Name")
@@ -894,3 +941,96 @@ try:
     )
 except Exception as e:
     st.sidebar.error(f"Could not generate Excel export: {e}")
+
+# ---------------------------------------------------------
+# NEW TAB: Day-wise Sales Trends & Export
+# ---------------------------------------------------------
+# Agar tune upar 'tabs' variable use kiya hai, toh tabs[-1] automatically is naye tab ko target karega.
+# Agar tune 't6' jaisa koi variable banaya hai, toh 'with tabs[-1]:' ki jagah 'with t6:' likhna.
+
+with tabs[-1]:
+    st.markdown("### 📅 Day-wise Trend Analysis & Export")
+    
+    # 1. Date Standardization & Day Extraction
+    df_trend = df_processed.copy()
+    df_trend["Date"] = pd.to_datetime(df_trend["Date"], errors='coerce')
+    df_trend = df_trend.dropna(subset=["Date"])
+    df_trend["DayOfWeek"] = df_trend["Date"].dt.day_name()
+    
+    # 2. UI Filters (Date Range, Product, Store)
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        min_date = df_trend["Date"].min().date() if not df_trend.empty else None
+        max_date = df_trend["Date"].max().date() if not df_trend.empty else None
+        if min_date and max_date:
+            # Set default range to last 30 days or min_date if data is smaller
+            default_start = max(min_date, max_date - pd.Timedelta(days=30))
+            selected_dates = st.date_input("🗓️ Select Date Range", [default_start, max_date], min_value=min_date, max_value=max_date, key="date_range_trend")
+        else:
+            selected_dates = []
+            st.warning("No valid dates found in data.")
+    
+    with col2:
+        available_items = ["All"] + sorted(df_trend["Product"].dropna().unique().tolist())
+        selected_item_trend = st.selectbox("👕 Filter by Product", available_items, key="trend_product")
+        
+    with col3:
+        available_stores = sorted(df_trend["Store Name"].dropna().unique().tolist())
+        selected_stores_trend = st.multiselect("🏬 Filter by Store", available_stores, default=available_stores[:3] if len(available_stores) >= 3 else available_stores, key="trend_store")
+        
+    # 3. Apply Filters Engine
+    if len(selected_dates) == 2:
+        df_trend = df_trend[(df_trend["Date"].dt.date >= selected_dates[0]) & (df_trend["Date"].dt.date <= selected_dates[1])]
+    
+    if selected_item_trend != "All":
+        df_trend = df_trend[df_trend["Product"] == selected_item_trend]
+        
+    if selected_stores_trend:
+        df_trend = df_trend[df_trend["Store Name"].isin(selected_stores_trend)]
+        
+    # 4. Rendering Visuals & Export
+    st.divider()
+    if not df_trend.empty:
+        qty_col = "Sales Qty" if "Sales Qty" in df_trend.columns else ("qty" if "qty" in df_trend.columns else None)
+        day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+        
+        st.markdown(f"✅ **Showing trends for:** {selected_item_trend} | **Rows Analyzed:** {len(df_trend)}")
+        
+        # Aggregation based on available quantity column
+        # Aggregation based on available quantity column
+        if qty_col:
+            day_data = df_trend.groupby("DayOfWeek")[qty_col].sum().reindex(day_order).fillna(0)
+        else:
+            day_data = df_trend.groupby("DayOfWeek").size().reindex(day_order).fillna(0)
+            
+        # Naya Plotly Engine (Numbers + Chronological Sorting)
+        import plotly.express as px
+        plot_df = day_data.reset_index()
+        plot_df.columns = ["Day", "Total Sales"]
+        
+        fig = px.bar(
+            plot_df, 
+            x="Day", 
+            y="Total Sales", 
+            text="Total Sales",
+            color_discrete_sequence=["#ff4b4b"]
+        )
+        fig.update_traces(texttemplate='%{text}', textposition='outside')
+        fig.update_layout(
+            xaxis={'categoryorder':'array', 'categoryarray': day_order}, 
+            yaxis_title="Quantity Sold",
+            margin=dict(t=20, b=20)
+        )
+        
+        st.plotly_chart(fig, use_container_width=True)
+        
+        # One-click Filtered Data CSV Downloader
+        csv_data = df_trend.to_csv(index=False).encode('utf-8')
+        st.download_button(
+            label=f"📥 Download '{selected_item_trend}' Filtered Data (CSV)",
+            data=csv_data,
+            file_name=f"Day_Trends_{selected_item_trend}.csv",
+            mime="text/csv"
+        )
+    else:
+        st.warning("⚠️ No data matches the selected filters.")
