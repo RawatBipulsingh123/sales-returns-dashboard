@@ -13,7 +13,7 @@ Run with:
 """
 
 import io
-
+import re
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -172,7 +172,6 @@ def aggregate_dimension(df: pd.DataFrame, dimension_col: str) -> pd.DataFrame:
     })
     
     grouped = pd.concat([grouped, total_row], ignore_index=True)
-    # ---------------------------------------------------
 
     return grouped[[dimension_col] + AGG_COLUMNS]
 
@@ -198,7 +197,6 @@ def style_aggregated_df(df: pd.DataFrame):
         }
     )
 
-    # pandas >= 2.1 renamed applymap -> map; support both.
     try:
         styler = styler.map(highlight_high_returns, subset=["Return Rate %"])
     except AttributeError:
@@ -247,12 +245,6 @@ def render_aggregation_section(df_subset: pd.DataFrame, key_prefix: str) -> dict
 # Excel Export (fully in-memory)
 # --------------------------------------------------------------------------
 def generate_excel_export(aggregation_data: dict) -> bytes:
-    """
-    Builds a formatted .xlsx workbook in memory: one sheet per year plus
-    an Overall sheet, each containing the Store / Color / Size aggregation
-    tables with bold headers, number formatting, and red-flagged high
-    return rates.
-    """
     output = io.BytesIO()
 
     with pd.ExcelWriter(output, engine="xlsxwriter") as writer:
@@ -281,7 +273,6 @@ def generate_excel_export(aggregation_data: dict) -> bytes:
         )
         text_format = workbook.add_format({"border": 1})
 
-        # Order sheets: years ascending, Overall last.
         year_keys = [k for k in aggregation_data.keys() if k != "Overall"]
         try:
             year_keys = sorted(year_keys, key=lambda x: int(x))
@@ -349,8 +340,7 @@ try:
     df_raw = load_excel_file(file_bytes)
 except Exception as e:
     st.error(
-        "❌ Could not read the uploaded file. It may be corrupted or not a valid "
-        f"Excel file.\n\nDetails: {e}"
+        f"❌ Could not read the uploaded file. It may be corrupted or not a valid Excel file.\n\nDetails: {e}"
     )
     st.stop()
 
@@ -427,14 +417,12 @@ with tabs[len(years)]:
     excel_aggregation_data["Overall"] = render_aggregation_section(df_processed, "overall")
 
 # --------------------------------------------------------------------------
-# --------------------------------------------------------------------------
 # Item Search & Deep Dive Tab (Master Search Engine)
 # --------------------------------------------------------------------------
 with tabs[len(years) + 1]:
     st.markdown("### 🔍 Master Search & Ledger")
     st.caption("Filter by Date, Store, or Item to dynamically view sales history and current stock.")
 
-    # 1. Base Copy
     base_df = df_processed.copy()
     base_df["EANCode"] = base_df["EANCode"].astype(str).str.strip()
     
@@ -445,7 +433,6 @@ with tabs[len(years) + 1]:
     else:
         min_dt, max_dt = None, None
 
-    # --- TOP ROW: GLOBAL DATE & STORE FILTERS ---
     f_row1_1, f_row1_2 = st.columns(2)
     with f_row1_1:
         if pd.notnull(min_dt) and pd.notnull(max_dt):
@@ -464,7 +451,6 @@ with tabs[len(years) + 1]:
         store_list = sorted(base_df["Store Name"].dropna().unique().tolist())
         s_store = st.multiselect("🏬 Global Store Filter", store_list, key="top_store")
 
-    # --- BOTTOM ROW: ITEM-SPECIFIC FILTERS ---
     item_df = base_df.copy()
     
     f_row2_1, f_row2_2, f_row2_3, f_row2_4 = st.columns(4)
@@ -489,8 +475,6 @@ with tabs[len(years) + 1]:
         if s_size != "All": item_df = item_df[item_df["Size"] == s_size]
 
     target_eans = item_df["EANCode"].unique().tolist()
-
-    # --- FINAL SALES DATAFRAME ---
     search_df = item_df.copy()
     
     if len(sel_dates) == 2:
@@ -521,9 +505,7 @@ with tabs[len(years) + 1]:
         st.markdown("#### 📦 Current Stock Location")
         if stock_file is not None:
             try:
-                import io
                 file_bytes = stock_file.getvalue()
-                
                 if stock_file.name.endswith('.csv'):
                     df_stock_search = pd.read_csv(io.BytesIO(file_bytes), skiprows=6, low_memory=False)
                 else:
@@ -531,7 +513,6 @@ with tabs[len(years) + 1]:
                 
                 if all(col in df_stock_search.columns for col in ["EANCode", "StoreName", "StockInHand"]):
                     df_stock_search["EANCode"] = df_stock_search["EANCode"].astype(str).str.strip()
-                    
                     stock_filtered = df_stock_search.copy()
                     
                     if s_ean != "All":
@@ -539,13 +520,10 @@ with tabs[len(years) + 1]:
                     else:
                         if s_prod != "All" and "ProductName" in stock_filtered.columns:
                             stock_filtered = stock_filtered[stock_filtered["ProductName"].astype(str).str.strip().str.upper() == str(s_prod).strip().upper()]
-                        
                         if s_col != "All" and "ColorName" in stock_filtered.columns:
                             stock_filtered = stock_filtered[stock_filtered["ColorName"].astype(str).str.strip().str.upper() == str(s_col).strip().upper()]
-                            
                         if s_size != "All" and "SizeName" in stock_filtered.columns:
                             stock_filtered = stock_filtered[stock_filtered["SizeName"].astype(str).str.strip().str.upper() == str(s_size).strip().upper()]
-                        
                         if s_prod == "All" and s_col == "All" and s_size == "All":
                             stock_filtered = stock_filtered[stock_filtered["EANCode"].isin(target_eans)]
 
@@ -554,14 +532,12 @@ with tabs[len(years) + 1]:
                     else:
                         if s_store:
                             stock_filtered = stock_filtered[stock_filtered["StoreName"].isin(s_store)]
-                        
                         if "ProductName" in stock_filtered.columns:
                             stock_agg = stock_filtered.groupby(["StoreName", "ProductName"], as_index=False)["StockInHand"].sum()
                             stock_agg = stock_agg.rename(columns={"StoreName": "Store", "ProductName": "Product", "StockInHand": "Units Available"})
                         else:
                             stock_agg = stock_filtered.groupby(["StoreName"], as_index=False)["StockInHand"].sum()
                             stock_agg = stock_agg.rename(columns={"StoreName": "Store", "StockInHand": "Units Available"})
-                            
                         st.dataframe(stock_agg.sort_values("Units Available", ascending=False).reset_index(drop=True), use_container_width=True)
                 else:
                     st.warning("⚠️ Stock file is missing EANCode, StoreName, or StockInHand columns.")
@@ -581,6 +557,7 @@ with tabs[len(years) + 1]:
         st.dataframe(ledger_df.reset_index(drop=True), use_container_width=True)
     else:
         st.info("No transaction data available for this selection.")
+
 # --------------------------------------------------------------------------
 # Custom Visualizations Tab
 # --------------------------------------------------------------------------
@@ -590,10 +567,7 @@ with tabs[len(years) + 2]:
 
     viz_df = df_processed.copy()
 
-   # --- GLOBAL CASCADING FILTERS ---
     st.markdown("#### 🔍 Global Filters")
-    
-    # Ensure Year column is extracted for filtering
     if "Year" not in viz_df.columns and "Date" in viz_df.columns:
         viz_df["Year"] = pd.to_datetime(viz_df["Date"]).dt.year
 
@@ -630,7 +604,6 @@ with tabs[len(years) + 2]:
         
     st.divider()
 
-    # --- DUAL CHART RENDERER ---
     chart_col1, chart_col2 = st.columns(2)
 
     def render_chart(container, chart_id):
@@ -652,11 +625,9 @@ with tabs[len(years) + 2]:
                 st.error("⚠️ Y-Axis must be numeric.")
             else:
                 try:
-                    # Drop TOTAL row and calculate
                     clean_viz_df = viz_df[viz_df[x_axis].astype(str) != "TOTAL"]
                     plot_df = clean_viz_df.groupby(x_axis, as_index=False, dropna=False)[y_axis].sum()
                     
-                    # Strict Top N logic (No 'Other' category)
                     if len(plot_df) > top_n and chart_type in ("Bar", "Pie"):
                         plot_df = plot_df.sort_values(y_axis, ascending=False).head(top_n)
                         
@@ -679,37 +650,28 @@ with tabs[len(years) + 2]:
                 except Exception as e:
                     st.error(f"⚠️ Error rendering chart: {e}")
 
-  # First Row: Charts 1 & 2
     render_chart(chart_col1, "1")
     render_chart(chart_col2, "2")
-    
     st.divider()
-    
-    # Second Row: Chart 3
     chart_col3, chart_col4 = st.columns(2)
     render_chart(chart_col3, "3")
-    # chart_col4 is left empty to maintain width scaling
-
-
 
 
 # ---------------------------------------------------------
 # Stock vs Sales Analysis Tab
 # ---------------------------------------------------------
-with tabs[-1]:
+with tabs[-2]:
     st.markdown("### ⚖️ Comprehensive Stock vs Sales Analysis")
     
     if stock_file is None:
         st.info("👈 Please upload the Stock Data (CSV/Excel) in the sidebar to unlock this analysis.")
     else:
         try:
-            # 1. Smart Load & Clean Stock Data (Handles both Regular & EC Formats)
             if stock_file.name.endswith('.csv'):
                 df_stock_raw = pd.read_csv(stock_file, skiprows=6, low_memory=False)
             else:
                 df_stock_raw = pd.read_excel(stock_file, skiprows=6)
                 
-            # Agar skiprows=6 lagane se data corrupt hua (yani EC File hai), toh reset karke normal read kar
             if "StoreName" not in df_stock_raw.columns and "StockInHand" not in df_stock_raw.columns:
                 stock_file.seek(0)
                 if stock_file.name.endswith('.csv'):
@@ -717,7 +679,6 @@ with tabs[-1]:
                 else:
                     df_stock_raw = pd.read_excel(stock_file)
 
-            # EC columns ko Regular columns mein standardise karna
             col_map = {
                 "Eancode": "EANCode",
                 "Productname": "ProductName",
@@ -735,18 +696,13 @@ with tabs[-1]:
             if missing:
                 st.error(f"⚠️ Missing critical columns in Stock file: {missing}")
             else:
-                # 2. MEMORY OPTIMIZATION & Column Mapping
                 keep_cols = stock_base_cols + [c for c in ["ProductName", "ColorName", "SizeName"] if c in df_stock_raw.columns]
                 df_stock = df_stock_raw[keep_cols].copy()
                 
-                if "ColorName" in df_stock.columns:
-                    df_stock.rename(columns={"ColorName": "Color"}, inplace=True)
-                if "SizeName" in df_stock.columns:
-                    df_stock.rename(columns={"SizeName": "Size"}, inplace=True)
-                if "StoreName" in df_stock.columns:
-                    df_stock.rename(columns={"StoreName": "Store Name"}, inplace=True)
-                if "ProductName" in df_stock.columns:
-                    df_stock.rename(columns={"ProductName": "Product"}, inplace=True)
+                if "ColorName" in df_stock.columns: df_stock.rename(columns={"ColorName": "Color"}, inplace=True)
+                if "SizeName" in df_stock.columns: df_stock.rename(columns={"SizeName": "Size"}, inplace=True)
+                if "StoreName" in df_stock.columns: df_stock.rename(columns={"StoreName": "Store Name"}, inplace=True)
+                if "ProductName" in df_stock.columns: df_stock.rename(columns={"ProductName": "Product"}, inplace=True)
                 
                 df_processed["EANCode"] = df_processed["EANCode"].astype(str).str.strip()
                 df_stock["EANCode"] = df_stock["EANCode"].astype(str).str.strip()
@@ -766,23 +722,14 @@ with tabs[-1]:
                 df_processed["Store Name"] = df_processed["Store Name"].astype(str).str.upper().str.strip()
                 df_stock["Store Name"] = df_stock["Store Name"].astype(str).str.upper().str.strip()
             
-              
-               # ---------------------------------------------------------
-               # ---------------------------------------------------------
-            # UI Filters (Year, Product, Stores)
-                
                 st.markdown("##### 🔍 Apply Filters")
-                import re
                 def standardize_store_name(name):
                     name = str(name).strip()
                     name = re.sub(r'^Ethnicity\s*-\s*', 'ET - ', name, flags=re.IGNORECASE)
                     name = re.sub(r'^EC\s*-\s*', 'ET - ', name, flags=re.IGNORECASE)
                     name = re.sub(r'\s*\(?2\)?$', '', name).strip()
                     return name
-            
 
-                
-                # Apply Standardization to Sales data too
                 df_processed["Store Name"] = df_processed["Store Name"].apply(standardize_store_name)
                 
                 search_mode = st.radio("Search By:", ["Product Name", "EAN Code"], horizontal=True)
@@ -797,11 +744,11 @@ with tabs[-1]:
                 
                 with col2:
                     if search_mode == "Product Name":
-                        available_options = ["All"] + sorted(df_processed["Product"].dropna().unique().tolist())
-                        selected_item = st.selectbox("👕 Select Product (Type to Search)", available_options)
+                        available_options = sorted(df_processed["Product"].dropna().unique().tolist())
+                        selected_items = st.multiselect("👕 Select Products (Leave blank for All)", available_options)
                     else:
                         available_options = sorted(df_processed["EANCode"].dropna().astype(str).unique().tolist())
-                        selected_item = st.selectbox("🏷️ Select EAN Code (Type to Search)", available_options)
+                        selected_items = st.multiselect("🏷️ Select EAN Codes (Leave blank for All)", available_options)
                 
                 col3, col4 = st.columns([3, 1])
                 with col3:
@@ -821,17 +768,22 @@ with tabs[-1]:
                 
                 st.divider()
 
-                # 3. Apply Filters to Sales & Stock
-                if search_mode == "Product Name":
-                    if selected_item == "All":
-                        all_product_sales = df_processed.copy()
-                        filtered_stock = df_stock.copy()
-                    else:
-                        all_product_sales = df_processed[df_processed["Product"] == selected_item].copy()
-                        filtered_stock = df_stock[df_stock["Product"].astype(str).str.strip().str.upper() == str(selected_item).strip().upper()].copy()
+                if not selected_items:
+                    all_product_sales = df_processed.copy()
+                    filtered_stock = df_stock.copy()
+                    ui_title_item = "All Products"
                 else:
-                    all_product_sales = df_processed[df_processed["EANCode"].astype(str).str.strip() == str(selected_item).strip()].copy()
-                    filtered_stock = df_stock[df_stock["EANCode"].astype(str).str.strip().str.upper() == str(selected_item).strip().upper()].copy()
+                    if search_mode == "Product Name":
+                        all_product_sales = df_processed[df_processed["Product"].isin(selected_items)].copy()
+                        upper_items = [str(x).strip().upper() for x in selected_items]
+                        filtered_stock = df_stock[df_stock["Product"].astype(str).str.strip().str.upper().isin(upper_items)].copy()
+                    else:
+                        str_items = [str(x).strip() for x in selected_items]
+                        all_product_sales = df_processed[df_processed["EANCode"].astype(str).str.strip().isin(str_items)].copy()
+                        upper_items = [str(x).strip().upper() for x in selected_items]
+                        filtered_stock = df_stock[df_stock["EANCode"].astype(str).str.strip().str.upper().isin(upper_items)].copy()
+                    
+                    ui_title_item = f"{len(selected_items)} Items Selected"
                 
                 filtered_sales = all_product_sales.copy()
                 
@@ -842,18 +794,12 @@ with tabs[-1]:
                     filtered_sales = filtered_sales[filtered_sales["Store Name"].isin(selected_stores)]
                     filtered_stock = filtered_stock[filtered_stock["Store Name"].isin(selected_stores)]
                     
-                st.success(f"✅ Analytics for **{selected_item}** | Year: **{selected_year}** | Stores: **{len(selected_stores)} Selected**")
-                
-                # Standardize Color and Size strings to prevent split rows (e.g. 'Red' vs 'RED')
                 for col in ["Color", "Size"]:
                     if col in filtered_sales.columns:
                         filtered_sales[col] = filtered_sales[col].astype(str).str.upper().str.strip()
                     if col in filtered_stock.columns:
                         filtered_stock[col] = filtered_stock[col].astype(str).str.upper().str.strip()
 
-                # ---------------------------------------------------------
-                # Master Aggregation Logic
-                # ---------------------------------------------------------
                 def generate_table(sales_df, stock_df, group_col):
                     if group_col not in sales_df.columns or group_col not in stock_df.columns:
                         return None
@@ -878,54 +824,173 @@ with tabs[-1]:
                         final = final.drop(columns=["Send Qty", "Percentage"])
                     return final
 
-                st.success(f"✅ Analytics for **{selected_item}** | Year: **{selected_year}** | Stores: **{len(selected_stores)} Selected**")
-                # 4. Render 3 Separate Tables automatically
-                st.markdown("#### 🏢 Store-wise Summary")
-                df_store = generate_table(filtered_sales, filtered_stock, "Store Name")
-                st.dataframe(df_store, use_container_width=True)
+                items_to_display = selected_items if selected_items else ["All Products"]
                 
-                col_left, col_right = st.columns(2)
-                
-                with col_left:
-                    st.markdown("#### 🎨 Color-wise Summary")
-                    df_color = generate_table(filtered_sales, filtered_stock, "Color")
-                    if df_color is not None:
-                        st.dataframe(df_color, use_container_width=True)
+                for item in items_to_display:
+                    if item == "All Products":
+                        item_sales_ui = filtered_sales
+                        item_stock_ui = filtered_stock
+                        st.markdown(f"### 📦 Analytics for: **All Products**")
                     else:
-                        st.warning("Color data missing.")
+                        if search_mode == "Product Name":
+                            item_sales_ui = filtered_sales[filtered_sales["Product"] == item]
+                            item_stock_ui = filtered_stock[filtered_stock["Product"].astype(str).str.strip().str.upper() == str(item).strip().upper()]
+                        else:
+                            item_sales_ui = filtered_sales[filtered_sales["EANCode"].astype(str).str.strip() == str(item).strip()]
+                            item_stock_ui = filtered_stock[filtered_stock["EANCode"].astype(str).str.strip().str.upper() == str(item).strip().upper()]
+                        st.markdown(f"### 📦 Analytics for: **{item}**")
                         
-                with col_right:
-                    st.markdown("#### 📏 Size-wise Summary")
-                    df_size = generate_table(filtered_sales, filtered_stock, "Size")
-                    if df_size is not None:
-                        st.dataframe(df_size, use_container_width=True)
-                    else:
-                        st.warning("Size data missing.")
-    # --- TAB EXPORT CODE STARTS HERE ---
-            st.divider()
-            import io
-            buffer = io.BytesIO()
-            with pd.ExcelWriter(buffer, engine='xlsxwriter') as writer:
-                # Replace 'df_store' and 'df_color' with your actual variable names if they are different!
+                    st.caption(f"Year: **{selected_year}** | Stores: **{len(selected_stores)} Selected**")
+                    
+                    st.markdown("#### 🏢 Store-wise Summary")
+                    df_store = generate_table(item_sales_ui, item_stock_ui, "Store Name")
+                    if df_store is not None: st.dataframe(df_store, use_container_width=True)
+                    
+                    col_left, col_right = st.columns(2)
+                    with col_left:
+                        st.markdown("#### 🎨 Color-wise Summary")
+                        df_color = generate_table(item_sales_ui, item_stock_ui, "Color")
+                        if df_color is not None:
+                            st.dataframe(df_color, use_container_width=True)
+                        else:
+                            st.warning("Color data missing.")
+                            
+                    with col_right:
+                        st.markdown("#### 📏 Size-wise Summary")
+                        df_size = generate_table(item_sales_ui, item_stock_ui, "Size")
+                        if df_size is not None:
+                            st.dataframe(df_size, use_container_width=True)
+                        else:
+                            st.warning("Size data missing.")
+                            
+                    st.divider()
+                
                 if 'df_store' in locals() and df_store is not None:
-                    df_store.to_excel(writer, sheet_name="Store-wise", index=False)
-                if 'df_color' in locals() and df_color is not None:
-                    df_color.to_excel(writer, sheet_name="Color-wise", index=False)
-                if 'df_size' in locals() and df_size is not None:
-                    df_size.to_excel(writer, sheet_name="Size-wise", index=False)
-            
-            st.download_button(
-                label="📥 Download Stock vs Sales Report (.xlsx)",
-                data=buffer.getvalue(),
-                file_name="Stock_vs_Sales_Filtered.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True
-            )
-            # --- TAB EXPORT CODE ENDS HERE ---
-                
-                
+                    try:
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                            workbook = writer.book
+                            
+                            header_format = workbook.add_format({'bg_color': '#4F81BD', 'font_color': 'white', 'bold': True, 'border': 1})
+                            pct_format = workbook.add_format({'num_format': '0.00%', 'border': 1})
+                            total_format = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1})
+                            normal_format = workbook.add_format({'border': 1})
+                            title_format = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#1F4E78'})
+                            
+                            items_to_export = selected_items if selected_items else ["All Products"]
+                            
+                            for item in items_to_export:
+                                if item == "All Products":
+                                    item_sales = filtered_sales
+                                    item_stock = filtered_stock
+                                else:
+                                    if search_mode == "Product Name":
+                                        item_sales = filtered_sales[filtered_sales["Product"] == item]
+                                        item_stock = filtered_stock[filtered_stock["Product"].astype(str).str.strip().str.upper() == str(item).strip().upper()]
+                                    else:
+                                        item_sales = filtered_sales[filtered_sales["EANCode"].astype(str).str.strip() == str(item).strip()]
+                                        item_stock = filtered_stock[filtered_stock["EANCode"].astype(str).str.strip().str.upper() == str(item).strip().upper()]
+                                
+                                i_store = generate_table(item_sales, item_stock, "Store Name")
+                                i_color = generate_table(item_sales, item_stock, "Color")
+                                i_size = generate_table(item_sales, item_stock, "Size")
+                                
+                                sheet_name = re.sub(r'[\\/*?:\[\]]', '', str(item))[:31]
+                                base_sheet_name = sheet_name
+                                counter = 1
+                                while sheet_name in writer.sheets:
+                                    suffix = f"_{counter}"
+                                    sheet_name = base_sheet_name[:31-len(suffix)] + suffix
+                                    counter += 1
+                                
+                                export_sheets = {
+                                    'Store Summary': i_store,
+                                    'Color Summary': i_color,
+                                    'Size Summary': i_size
+                                }
+                                
+                                current_row = 0
+                                
+                                for table_title, table_df in export_sheets.items():
+                                    if table_df is None or table_df.empty:
+                                        continue
+                                        
+                                    excel_df = table_df.copy() 
+                                    sales_col = "Sales Qty"
+                                    stock_col = "Current StoreStock"
+                                    
+                                    total_inventory = excel_df[sales_col] + excel_df[stock_col]
+                                    excel_df["Sales %"] = (excel_df[sales_col] / total_inventory.replace(0, 1))
+                                    
+                                    total_sales = excel_df[sales_col].sum()
+                                    total_stock = excel_df[stock_col].sum()
+                                    total_pct = total_sales / (total_sales + total_stock) if (total_sales + total_stock) > 0 else 0
+                                    
+                                    total_row = pd.DataFrame({
+                                        excel_df.columns[0]: ["FINAL TOTAL"],
+                                        sales_col: [total_sales],
+                                        stock_col: [total_stock]
+                                    })
+                                    
+                                    if "Send Qty" in excel_df.columns:
+                                        total_row["Send Qty"] = [total_sales + total_stock]
+                                    if "Percentage" in excel_df.columns:
+                                        total_row["Percentage"] = [f"{(total_sales / (total_sales + total_stock) * 100):.1f}%" if (total_sales + total_stock) > 0 else "0.0%"]
+                                    
+                                    total_row["Sales %"] = [total_pct]
+                                    excel_df = pd.concat([excel_df, total_row], ignore_index=True)
+                                    
+                                    worksheet = writer.sheets.get(sheet_name)
+                                    if not worksheet:
+                                        worksheet = workbook.add_worksheet(sheet_name)
+                                        
+                                    worksheet.write(current_row, 0, table_title, title_format)
+                                    current_row += 1
+                                    
+                                    excel_df.to_excel(writer, index=False, sheet_name=sheet_name, startrow=current_row)
+                                    
+                                    for col_num, value in enumerate(excel_df.columns.values):
+                                        worksheet.write(current_row, col_num, value, header_format)
+                                        
+                                    for row_idx in range(len(excel_df)): 
+                                        is_last_row = (row_idx == len(excel_df) - 1)
+                                        
+                                        for col_num in range(len(excel_df.columns)):
+                                            col_name = excel_df.columns[col_num]
+                                            val = excel_df.iloc[row_idx, col_num]
+                                            
+                                            if "%" in col_name or col_name == "Percentage":
+                                                fmt = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'num_format': '0.00%'}) if is_last_row else pct_format
+                                                if isinstance(val, str) and '%' in val:
+                                                    try:
+                                                        val = float(val.replace('%','')) / 100.0
+                                                    except ValueError:
+                                                        val = 0.0
+                                                worksheet.write(current_row + 1 + row_idx, col_num, val, fmt)
+                                            else:
+                                                fmt = total_format if is_last_row else normal_format
+                                                worksheet.write(current_row + 1 + row_idx, col_num, val, fmt)
+                                                
+                                    current_row += len(excel_df) + 3 
+                                    
+                                if sheet_name in writer.sheets:
+                                    worksheet = writer.sheets[sheet_name]
+                                    worksheet.set_column(0, 0, 35)
+                                    worksheet.set_column(1, 10, 15)
+                                    
+                        excel_data = output.getvalue()
+                        
+                        st.download_button(
+                            label=f"📥 Download Multi-Product Report ({len(items_to_export)} Sheets)",
+                            data=excel_data,
+                            file_name="Multi_Product_Stock_Report.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    except Exception as e:
+                        st.error(f"Error generating multi-sheet Excel: {e}")
         except Exception as e:
             st.error(f"Error processing stock data: {e}")
+
 # --------------------------------------------------------------------------
 # Sidebar: Excel Export
 # --------------------------------------------------------------------------
@@ -945,25 +1010,19 @@ except Exception as e:
 # ---------------------------------------------------------
 # NEW TAB: Day-wise Sales Trends & Export
 # ---------------------------------------------------------
-# Agar tune upar 'tabs' variable use kiya hai, toh tabs[-1] automatically is naye tab ko target karega.
-# Agar tune 't6' jaisa koi variable banaya hai, toh 'with tabs[-1]:' ki jagah 'with t6:' likhna.
-
 with tabs[-1]:
     st.markdown("### 📅 Day-wise Trend Analysis & Export")
     
-    # 1. Date Standardization & Day Extraction
     df_trend = df_processed.copy()
     df_trend["Date"] = pd.to_datetime(df_trend["Date"], errors='coerce')
     df_trend = df_trend.dropna(subset=["Date"])
     df_trend["DayOfWeek"] = df_trend["Date"].dt.day_name()
     
-    # 2. UI Filters (Date Range, Product, Store)
     col1, col2, col3 = st.columns(3)
     with col1:
         min_date = df_trend["Date"].min().date() if not df_trend.empty else None
         max_date = df_trend["Date"].max().date() if not df_trend.empty else None
         if min_date and max_date:
-            # Set default range to last 30 days or min_date if data is smaller
             default_start = max(min_date, max_date - pd.Timedelta(days=30))
             selected_dates = st.date_input("🗓️ Select Date Range", [default_start, max_date], min_value=min_date, max_value=max_date, key="date_range_trend")
         else:
@@ -978,7 +1037,6 @@ with tabs[-1]:
         available_stores = sorted(df_trend["Store Name"].dropna().unique().tolist())
         selected_stores_trend = st.multiselect("🏬 Filter by Store", available_stores, default=available_stores[:3] if len(available_stores) >= 3 else available_stores, key="trend_store")
         
-    # 3. Apply Filters Engine
     if len(selected_dates) == 2:
         df_trend = df_trend[(df_trend["Date"].dt.date >= selected_dates[0]) & (df_trend["Date"].dt.date <= selected_dates[1])]
     
@@ -988,7 +1046,6 @@ with tabs[-1]:
     if selected_stores_trend:
         df_trend = df_trend[df_trend["Store Name"].isin(selected_stores_trend)]
         
-    # 4. Rendering Visuals & Export
     st.divider()
     if not df_trend.empty:
         qty_col = "Sales Qty" if "Sales Qty" in df_trend.columns else ("qty" if "qty" in df_trend.columns else None)
@@ -996,15 +1053,11 @@ with tabs[-1]:
         
         st.markdown(f"✅ **Showing trends for:** {selected_item_trend} | **Rows Analyzed:** {len(df_trend)}")
         
-        # Aggregation based on available quantity column
-        # Aggregation based on available quantity column
         if qty_col:
             day_data = df_trend.groupby("DayOfWeek")[qty_col].sum().reindex(day_order).fillna(0)
         else:
             day_data = df_trend.groupby("DayOfWeek").size().reindex(day_order).fillna(0)
             
-        # Naya Plotly Engine (Numbers + Chronological Sorting)
-        import plotly.express as px
         plot_df = day_data.reset_index()
         plot_df.columns = ["Day", "Total Sales"]
         
@@ -1024,7 +1077,6 @@ with tabs[-1]:
         
         st.plotly_chart(fig, use_container_width=True)
         
-        # One-click Filtered Data CSV Downloader
         csv_data = df_trend.to_csv(index=False).encode('utf-8')
         st.download_button(
             label=f"📥 Download '{selected_item_trend}' Filtered Data (CSV)",
