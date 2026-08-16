@@ -28,7 +28,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
 st.markdown("""
     <style>
     /* Hide top right menu and bottom footer */
@@ -55,6 +54,44 @@ st.markdown("""
     }
     </style>
     """, unsafe_allow_html=True)
+
+# ==========================================
+# 🔒 SECURE LOGIN SYSTEM FOR FREELANCE PITCH
+# ==========================================
+if "logged_in" not in st.session_state:
+    st.session_state["logged_in"] = False
+
+if not st.session_state["logged_in"]:
+    # UI Styling for a clean, centered login box
+    st.markdown("<br><br><br><br>", unsafe_allow_html=True)
+    col1, col2, col3 = st.columns([1, 1.5, 1])
+    
+    with col2:
+        st.markdown("<h2 style='text-align: center; color: #1F4E78;'>🔒 Client Portal Access</h2>", unsafe_allow_html=True)
+        st.markdown("<p style='text-align: center; color: gray;'>Advanced Sales & Returns Engine</p>", unsafe_allow_html=True)
+        st.markdown("---")
+        
+        username = st.text_input("User ID", placeholder="Enter your ID")
+        # type="password" text ko dots (***) mein hide kar dega
+        password = st.text_input("Password", type="password", placeholder="Enter your password")
+        
+        if st.button("Secure Login", use_container_width=True):
+            if username == "Bipul" and password == "87654321":
+                st.session_state["logged_in"] = True
+                st.rerun()
+            else:
+                st.error("❌ Invalid ID or Password. Access Denied.")
+    
+    # Agar login nahi hai, toh aage ka code yahi ruk jayega
+    st.stop()
+
+# Logout Button (Sidebar mein sabse upar dikhega)
+if st.sidebar.button("🚪 Logout", use_container_width=True):
+    st.session_state["logged_in"] = False
+    st.rerun()
+st.sidebar.markdown("---")
+# ==========================================
+
 
 REQUIRED_FIELDS = ["Date", "Store Name", "EANCode", "Product", "Color", "Size", "Quantity"]
 AGG_COLUMNS = ["Gross Sales", "Returns", "Net Sales", "Sales %", "Return Rate %"]
