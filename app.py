@@ -62,7 +62,6 @@ if "logged_in" not in st.session_state:
     st.session_state["logged_in"] = False
 
 if not st.session_state["logged_in"]:
-    # UI Styling for a clean, centered login box
     st.markdown("<br><br><br><br>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1.5, 1])
     
@@ -72,7 +71,6 @@ if not st.session_state["logged_in"]:
         st.markdown("---")
         
         username = st.text_input("User ID", placeholder="Enter your ID")
-        # type="password" text ko dots (***) mein hide kar dega
         password = st.text_input("Password", type="password", placeholder="Enter your password")
         
         if st.button("Secure Login", use_container_width=True):
@@ -82,10 +80,8 @@ if not st.session_state["logged_in"]:
             else:
                 st.error("❌ Invalid ID or Password. Access Denied.")
     
-    # Agar login nahi hai, toh aage ka code yahi ruk jayega
     st.stop()
 
-# Logout Button (Sidebar mein sabse upar dikhega)
 if st.sidebar.button("🚪 Logout", use_container_width=True):
     st.session_state["logged_in"] = False
     st.rerun()
@@ -102,14 +98,10 @@ AGG_COLUMNS = ["Gross Sales", "Returns", "Net Sales", "Sales %", "Return Rate %"
 # --------------------------------------------------------------------------
 @st.cache_data(show_spinner=False)
 def load_excel_file(file_bytes: bytes) -> pd.DataFrame:
-    """Reads the first sheet of an uploaded .xlsx file into a DataFrame."""
     return pd.read_excel(io.BytesIO(file_bytes))
 
 
 def guess_column_index(columns, keywords):
-    """Best-effort guess of which source column matches an internal field,
-    based on substring matches against a list of likely keywords. Falls
-    back to None if nothing matches to prevent blind default mapping."""
     lowered = [str(c).lower() for c in columns]
     for kw in keywords:
         for i, c in enumerate(lowered):
@@ -122,18 +114,10 @@ def guess_column_index(columns, keywords):
 # Pre-processing Engine
 # --------------------------------------------------------------------------
 def preprocess_data(df_raw: pd.DataFrame, mapping: dict):
-    """
-    Builds a clean, standardized working DataFrame from the raw upload
-    using the user-provided column mapping.
-
-    Returns:
-        (df_clean, dropped_rows) tuple
-    """
     df = pd.DataFrame(index=df_raw.index)
     for field in REQUIRED_FIELDS:
         df[field] = df_raw[mapping[field]].values
 
-    # --- Date -> Year (invalid dates coerced to NaT and dropped) ---
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
     df["Year"] = df["Date"].dt.year
 
@@ -142,14 +126,12 @@ def preprocess_data(df_raw: pd.DataFrame, mapping: dict):
     dropped_rows = rows_before - len(df)
     df["Year"] = df["Year"].astype(int)
 
-    # --- Quantity -> numeric, missing/unparseable treated as 0 ---
     if df["Quantity"].dtype == object:
         df["Quantity"] = (
             df["Quantity"].astype(str).str.replace(",", "", regex=False).str.strip()
         )
     df["Quantity"] = pd.to_numeric(df["Quantity"], errors="coerce").fillna(0)
 
-    # --- Categorical cleanup ---
     for col in ["Store Name", "Product","Color", "Size"]:
         df[col] = df[col].where(df[col].notna(), "Unknown")
         df[col] = df[col].astype(str).str.strip()
@@ -160,13 +142,9 @@ def preprocess_data(df_raw: pd.DataFrame, mapping: dict):
 
 
 # --------------------------------------------------------------------------
-# Business Logic: Gross / Returns / Net / Sales % / Return Rate %
+# Business Logic
 # --------------------------------------------------------------------------
 def aggregate_dimension(df: pd.DataFrame, dimension_col: str) -> pd.DataFrame:
-    """
-    Aggregates Quantity by a dimension (Store Name / Color / Size) into
-    Gross Sales, Returns, Net Sales, Sales %, and Return Rate %.
-    """
     if df.empty:
         return pd.DataFrame(columns=[dimension_col] + AGG_COLUMNS)
 
@@ -193,7 +171,6 @@ def aggregate_dimension(df: pd.DataFrame, dimension_col: str) -> pd.DataFrame:
 
     grouped = grouped.sort_values("Net Sales", ascending=False).reset_index(drop=True)
     
-    # --- FIXED LOGIC: Calculate and Append Total Row ---
     total_gross = grouped["Gross Sales"].sum()
     total_returns = grouped["Returns"].sum()
     total_net = grouped["Net Sales"].sum()
@@ -204,7 +181,7 @@ def aggregate_dimension(df: pd.DataFrame, dimension_col: str) -> pd.DataFrame:
         "Gross Sales": [total_gross],
         "Returns": [total_returns],
         "Net Sales": [total_net],
-        "Sales %": [1.0],  # Overall total represents 100% of sales
+        "Sales %": [1.0], 
         "Return Rate %": [total_return_rate]
     })
     
@@ -214,8 +191,6 @@ def aggregate_dimension(df: pd.DataFrame, dimension_col: str) -> pd.DataFrame:
 
 
 def style_aggregated_df(df: pd.DataFrame):
-    """Formats percentages as 0.00% and flags Return Rate % > 15% in red."""
-
     def highlight_high_returns(val):
         try:
             if val > 0.15:
@@ -256,8 +231,6 @@ def render_kpis(df_subset: pd.DataFrame):
 
 
 def render_aggregation_section(df_subset: pd.DataFrame, key_prefix: str) -> dict:
-    """Renders Store / Color / Size aggregation tables and returns the
-    underlying DataFrames so they can be reused for the Excel export."""
     results = {}
 
     st.markdown("#### 🏬 Performance by Store")
@@ -345,7 +318,7 @@ def generate_excel_export(aggregation_data: dict) -> bytes:
                             worksheet.write(current_row, col_idx, str(value), text_format)
                     current_row += 1
 
-                current_row += 2  # spacing between tables
+                current_row += 2 
 
             worksheet.set_column(0, 0, 24)
             worksheet.set_column(1, 5, 16)
@@ -956,12 +929,8 @@ with tabs[-2]:
                                     sales_col = "Sales Qty"
                                     stock_col = "Current StoreStock"
                                     
-                                    total_inventory = excel_df[sales_col] + excel_df[stock_col]
-                                    excel_df["Sales %"] = (excel_df[sales_col] / total_inventory.replace(0, 1))
-                                    
                                     total_sales = excel_df[sales_col].sum()
                                     total_stock = excel_df[stock_col].sum()
-                                    total_pct = total_sales / (total_sales + total_stock) if (total_sales + total_stock) > 0 else 0
                                     
                                     total_row = pd.DataFrame({
                                         excel_df.columns[0]: ["FINAL TOTAL"],
@@ -971,10 +940,10 @@ with tabs[-2]:
                                     
                                     if "Send Qty" in excel_df.columns:
                                         total_row["Send Qty"] = [total_sales + total_stock]
+                                        
                                     if "Percentage" in excel_df.columns:
                                         total_row["Percentage"] = [f"{(total_sales / (total_sales + total_stock) * 100):.1f}%" if (total_sales + total_stock) > 0 else "0.0%"]
                                     
-                                    total_row["Sales %"] = [total_pct]
                                     excel_df = pd.concat([excel_df, total_row], ignore_index=True)
                                     
                                     worksheet = writer.sheets.get(sheet_name)
