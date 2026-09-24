@@ -52,6 +52,20 @@ st.markdown("""
         height: 45px;
         font-weight: 600;
     }
+    /* Multiselect tags ko laal se hata kar professional Grey/Blue karna */
+    span[data-baseweb="tag"] {
+        background-color: #E2E8F0 !important;
+        color: #0F172A !important;
+        border-radius: 4px !important;
+        border: none !important;
+    }
+    
+    /* Dropdown aur inputs ke upar ki faltu jagah (labels) ko tight karna */
+    .stSelectbox label, .stMultiSelect label, .stDateInput label {
+        font-weight: 600 !important;
+        color: #475569 !important;
+    }
+
     </style>
     """, unsafe_allow_html=True)
 
@@ -1035,50 +1049,66 @@ except Exception as e:
     st.sidebar.error(f"Could not generate Excel export: {e}")
 
 # ---------------------------------------------------------
-# NEW TAB: Day-wise Sales Trends & Export
 # ---------------------------------------------------------
-with tabs[-1]:
-    st.markdown("### 📅 Day-wise Trend Analysis & Export")
+# NEW ADVANCED TAB: Day-wise Trend Analysis & Export
+# ---------------------------------------------------------
+with tabs[-2]: # Ensure yeh tera second-last tab ho, warna index theek kar lena
+    st.markdown("### 📅 Day-wise Trend Analysis")
     
     df_trend = df_processed.copy()
     df_trend["Date"] = pd.to_datetime(df_trend["Date"], errors='coerce')
     df_trend = df_trend.dropna(subset=["Date"])
     df_trend["DayOfWeek"] = df_trend["Date"].dt.day_name()
     
-    col1, col2, col3 = st.columns(3)
+    min_date = df_trend["Date"].min().date() if not df_trend.empty else None
+    max_date = df_trend["Date"].max().date() if not df_trend.empty else None
+    
+    # Timeline aur Filters ko professional layout mein set kiya
+    col1, col2, col3 = st.columns([1.5, 1, 1])
+    
     with col1:
-        min_date = df_trend["Date"].min().date() if not df_trend.empty else None
-        max_date = df_trend["Date"].max().date() if not df_trend.empty else None
+        st.markdown("##### 🗓️ Timeline (Timely Framework)")
         if min_date and max_date:
-            default_start = max(min_date, max_date - pd.Timedelta(days=30))
-            selected_dates = st.date_input("🗓️ Select Date Range", [default_start, max_date], min_value=min_date, max_value=max_date, key="date_range_trend")
+            # 1. Naye Quick Action Buttons (Fiverr Clients love this)
+            quick_date = st.radio("Quick Select", ["All Time", "Last 7 Days", "This Month", "Custom"], horizontal=True, label_visibility="collapsed")
+            
+            if quick_date == "Last 7 Days":
+                selected_dates = [max_date - pd.Timedelta(days=7), max_date]
+            elif quick_date == "This Month":
+                selected_dates = [max_date.replace(day=1), max_date]
+            elif quick_date == "Custom":
+                selected_dates = st.date_input("Select Range", [min_date, max_date], min_value=min_date, max_value=max_date, label_visibility="collapsed")
+            else:
+                selected_dates = [min_date, max_date]
         else:
             selected_dates = []
-            st.warning("No valid dates found in data.")
-    
+            st.warning("No valid dates found.")
+            
     with col2:
+        st.markdown("##### 👕 Product Filter")
         available_items = ["All"] + sorted(df_trend["Product"].dropna().unique().tolist())
-        selected_item_trend = st.selectbox("👕 Filter by Product", available_items, key="trend_product")
+        selected_item_trend = st.selectbox("Product", available_items, key="trend_product", label_visibility="collapsed")
         
     with col3:
+        st.markdown("##### 🏬 Store Slicer")
         available_stores = sorted(df_trend["Store Name"].dropna().unique().tolist())
-        selected_stores_trend = st.multiselect("🏬 Filter by Store", available_stores, default=available_stores[:3] if len(available_stores) >= 3 else available_stores, key="trend_store")
+        selected_stores_trend = st.multiselect("Store", available_stores, default=available_stores[:3] if len(available_stores) >= 3 else available_stores, key="trend_store", label_visibility="collapsed")
         
+    # Apply Data Filters
     if len(selected_dates) == 2:
         df_trend = df_trend[(df_trend["Date"].dt.date >= selected_dates[0]) & (df_trend["Date"].dt.date <= selected_dates[1])]
-    
     if selected_item_trend != "All":
         df_trend = df_trend[df_trend["Product"] == selected_item_trend]
-        
     if selected_stores_trend:
         df_trend = df_trend[df_trend["Store Name"].isin(selected_stores_trend)]
         
     st.divider()
+    
     if not df_trend.empty:
-        qty_col = "Sales Qty" if "Sales Qty" in df_trend.columns else ("qty" if "qty" in df_trend.columns else None)
+        qty_col = "Sales Qty" if "Sales Qty" in df_trend.columns else ("Quantity" if "Quantity" in df_trend.columns else None)
         day_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         
-        st.markdown(f"✅ **Showing trends for:** {selected_item_trend} | **Rows Analyzed:** {len(df_trend)}")
+        st.markdown(f"✅ **Analyzing:** {selected_item_trend} | **Data Points:** {len(df_trend)}")
         
         if qty_col:
             day_data = df_trend.groupby("DayOfWeek")[qty_col].sum().reindex(day_order).fillna(0)
@@ -1093,22 +1123,34 @@ with tabs[-1]:
             x="Day", 
             y="Total Sales", 
             text="Total Sales",
-            color_discrete_sequence=["#ff4b4b"]
+            color_discrete_sequence=["#1F4E78"] # Corporate Blue instead of harsh red
         )
-        fig.update_traces(texttemplate='%{text}', textposition='outside')
+        fig.update_traces(texttemplate='%{text}', textposition='outside', marker_line_color='black', marker_line_width=1)
+        
+        # 2. ACTIONABLE Framework: Average Benchmark Line add kardi
+        avg_sales = plot_df["Total Sales"].mean()
+        fig.add_hline(
+            y=avg_sales, 
+            line_dash="dash", 
+            line_color="#C00000", 
+            annotation_text=f"Average Sales: {avg_sales:.1f}", 
+            annotation_position="top left"
+        )
+        
         fig.update_layout(
             xaxis={'categoryorder':'array', 'categoryarray': day_order}, 
-            yaxis_title="Quantity Sold",
-            margin=dict(t=20, b=20)
+            yaxis_title="Units Sold",
+            margin=dict(t=30, b=20),
+            plot_bgcolor="rgba(0,0,0,0)" # Clean background
         )
         
         st.plotly_chart(fig, use_container_width=True)
         
         csv_data = df_trend.to_csv(index=False).encode('utf-8')
         st.download_button(
-            label=f"📥 Download '{selected_item_trend}' Filtered Data (CSV)",
+            label=f"📥 Export '{selected_item_trend}' Filtered Logic",
             data=csv_data,
-            file_name=f"Day_Trends_{selected_item_trend}.csv",
+            file_name=f"Advanced_Day_Trends_{selected_item_trend}.csv",
             mime="text/csv"
         )
     else:
@@ -1123,43 +1165,43 @@ with tabs[-1]:
     
     exec_df = df_processed.copy()
     
-    # 1. CASCADING SLICERS (Dependent Filters)
+    # 1. CASCADING SLICERS (Dependent Filters - Multi Select)
     st.markdown("##### ⚙️ Slicers")
     
-    # 3 ki jagah 4 columns banaye hain
     sl1, sl2, sl3, sl4 = st.columns(4)
     
     with sl1:
-        av_years = ["All"] + sorted(exec_df["Year"].dropna().astype(int).unique().tolist())
-        ex_year = st.selectbox("Filter Year", av_years, key="ex_year")
+        # "All" hata diya gaya hai kyunki khali box ka matlab 'All' hai
+        av_years = sorted(exec_df["Year"].dropna().astype(int).unique().tolist())
+        ex_year = st.multiselect("Filter Year", av_years, key="ex_year")
         
-    # Step 1: Year filter apply kar
-    if ex_year != "All": 
-        exec_df = exec_df[exec_df["Year"] == ex_year]
+    # Step 1: Year filter apply kar (ab == ki jagah .isin() use hoga)
+    if ex_year: 
+        exec_df = exec_df[exec_df["Year"].isin(ex_year)]
         
     with sl2:
-        av_stores = ["All"] + sorted(exec_df["Store Name"].dropna().unique().tolist())
-        ex_store = st.selectbox("Filter Store", av_stores, key="ex_store")
+        av_stores = sorted(exec_df["Store Name"].dropna().unique().tolist())
+        ex_store = st.multiselect("Filter Store", av_stores, key="ex_store")
         
-    # Step 2: Store filter apply kar (Taki aage sirf us store ka data jaye)
-    if ex_store != "All":
-        exec_df = exec_df[exec_df["Store Name"] == ex_store]
+    # Step 2: Store filter apply kar
+    if ex_store:
+        exec_df = exec_df[exec_df["Store Name"].isin(ex_store)]
         
     with sl3:
-        av_prods = ["All"] + sorted(exec_df["Product"].dropna().unique().tolist())
-        ex_prod = st.selectbox("Filter Product", av_prods, key="ex_prod")
+        av_prods = sorted(exec_df["Product"].dropna().unique().tolist())
+        ex_prod = st.multiselect("Filter Product", av_prods, key="ex_prod")
         
     # Step 3: Product filter apply kar 
-    if ex_prod != "All": 
-        exec_df = exec_df[exec_df["Product"] == ex_prod]
+    if ex_prod: 
+        exec_df = exec_df[exec_df["Product"].isin(ex_prod)]
         
     with sl4:
-        av_colors = ["All"] + sorted(exec_df["Color"].dropna().unique().tolist())
-        ex_color = st.selectbox("Filter Color", av_colors, key="ex_color")
+        av_colors = sorted(exec_df["Color"].dropna().unique().tolist())
+        ex_color = st.multiselect("Filter Color", av_colors, key="ex_color")
         
     # Step 4: Color filter apply kar
-    if ex_color != "All": 
-        exec_df = exec_df[exec_df["Color"] == ex_color]
+    if ex_color: 
+        exec_df = exec_df[exec_df["Color"].isin(ex_color)]
         st.divider()
     
     # 2. ACTIONABLE KPIs
