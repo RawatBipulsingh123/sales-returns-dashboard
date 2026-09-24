@@ -381,7 +381,7 @@ if len(set(mapping.values())) < len(mapping):
     )
 st.sidebar.markdown("---")
 st.sidebar.markdown("### 📦 Stock Data")
-stock_file = st.sidebar.file_uploader("Upload Stock Inventory", type=["xlsx"], key="stock_data")
+stock_file = st.sidebar.file_uploader("Upload Stock Inventory", type=["xlsx", "csv", "xls"], key="stock_data")
 
 # --------------------------------------------------------------------------
 # Pre-processing
@@ -407,7 +407,7 @@ if dropped_rows > 0:
     st.info(f"ℹ️ {dropped_rows:,} row(s) were excluded due to missing or invalid dates.")
 
 years = sorted(df_processed["Year"].unique().tolist())
-tab_labels = [str(y) for y in years] + ["Overall", "🔍 Item Search", "🔨 Custom Visualizations", "📦 Stock vs Sales", "📈 Day Trends"]
+tab_labels = [str(y) for y in years] + ["Overall", "🔍 Item Search", "🔨 Custom Visualizations", "📦 Stock vs Sales", "📈 Day Trends", "📊 Executive KPI"]
 tabs = st.tabs(tab_labels)
 
 excel_aggregation_data = {}
@@ -774,7 +774,8 @@ with tabs[-2]:
                 
                 with col4:
                     st.markdown("<br>", unsafe_allow_html=True)
-                    show_send_qty = st.checkbox("Show Send Qty & %", value=False)
+                    show_send_qty = st.checkbox("Show Send Qty & %", value=False)   
+                    show_returns = st.checkbox("Show Return Qty (-)", value=False)
                 
                 st.divider()
 
@@ -814,24 +815,41 @@ with tabs[-2]:
                     if group_col not in sales_df.columns or group_col not in stock_df.columns:
                         return None
                     
+                    # 1. Total Net Sales
                     s_agg = sales_df.groupby([group_col], as_index=False)["Quantity"].sum()
                     s_agg.rename(columns={"Quantity": "Sales Qty"}, inplace=True)
                     
+                    # 2. Sirf Negative (Returns) nikalna
+                    ret_agg = sales_df[sales_df["Quantity"] < 0].groupby([group_col], as_index=False)["Quantity"].sum()
+                    ret_agg.rename(columns={"Quantity": "Return Qty"}, inplace=True)
+                    
+                    # 3. Stock uthana
                     k_agg = stock_df.groupby([group_col], as_index=False)["StockInHand"].sum()
                     
+                    # Sabko aapas mein merge karna
                     merged = pd.merge(s_agg, k_agg, on=[group_col], how="outer").fillna(0)
+                    merged = pd.merge(merged, ret_agg, on=[group_col], how="left").fillna(0)
+                    
                     merged["Sales Qty"] = merged["Sales Qty"].astype(int)
+                    merged["Return Qty"] = merged["Return Qty"].astype(int)
                     merged["Current StoreStock"] = merged["StockInHand"].astype(int)
                     merged["Send Qty"] = merged["Sales Qty"] + merged["Current StoreStock"]
                     
                     merged["Percentage"] = (merged["Sales Qty"] / merged["Send Qty"].replace(0, 1)) * 100
                     merged["Percentage"] = merged["Percentage"].round(1).astype(str) + "%"
                     
-                    display_cols = [group_col, "Sales Qty", "Send Qty", "Current StoreStock", "Percentage"]
-                    final = merged[display_cols].sort_values(by="Sales Qty", ascending=False).reset_index(drop=True)
+                    # UI check ke hisaab se columns dikhana
+                    display_cols = [group_col, "Sales Qty"]
                     
-                    if not show_send_qty:
-                        final = final.drop(columns=["Send Qty", "Percentage"])
+                    if show_returns:
+                        display_cols.append("Return Qty")
+                        
+                    if show_send_qty:
+                        display_cols.extend(["Send Qty", "Current StoreStock", "Percentage"])
+                    else:
+                        display_cols.append("Current StoreStock")
+                        
+                    final = merged[display_cols].sort_values(by="Sales Qty", ascending=False).reset_index(drop=True)
                     return final
 
                 items_to_display = selected_items if selected_items else ["All Products"]
@@ -940,6 +958,9 @@ with tabs[-2]:
                                     
                                     if "Send Qty" in excel_df.columns:
                                         total_row["Send Qty"] = [total_sales + total_stock]
+
+                                    if "Return Qty" in excel_df.columns:
+                                        total_row["Return Qty"] = [excel_df["Return Qty"].sum()]
                                         
                                     if "Percentage" in excel_df.columns:
                                         total_row["Percentage"] = [f"{(total_sales / (total_sales + total_stock) * 100):.1f}%" if (total_sales + total_stock) > 0 else "0.0%"]
@@ -1092,3 +1113,88 @@ with tabs[-1]:
         )
     else:
         st.warning("⚠️ No data matches the selected filters.")
+
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# NEW TAB: Executive KPI & Donut Chart
+# ---------------------------------------------------------
+with tabs[-1]:
+    st.markdown("### 📊 Executive KPI & Top 5 Stores")
+    
+    exec_df = df_processed.copy()
+    
+    # 1. CASCADING SLICERS (Dependent Filters)
+    st.markdown("##### ⚙️ Slicers")
+    
+    # 3 ki jagah 4 columns banaye hain
+    sl1, sl2, sl3, sl4 = st.columns(4)
+    
+    with sl1:
+        av_years = ["All"] + sorted(exec_df["Year"].dropna().astype(int).unique().tolist())
+        ex_year = st.selectbox("Filter Year", av_years, key="ex_year")
+        
+    # Step 1: Year filter apply kar
+    if ex_year != "All": 
+        exec_df = exec_df[exec_df["Year"] == ex_year]
+        
+    with sl2:
+        av_stores = ["All"] + sorted(exec_df["Store Name"].dropna().unique().tolist())
+        ex_store = st.selectbox("Filter Store", av_stores, key="ex_store")
+        
+    # Step 2: Store filter apply kar (Taki aage sirf us store ka data jaye)
+    if ex_store != "All":
+        exec_df = exec_df[exec_df["Store Name"] == ex_store]
+        
+    with sl3:
+        av_prods = ["All"] + sorted(exec_df["Product"].dropna().unique().tolist())
+        ex_prod = st.selectbox("Filter Product", av_prods, key="ex_prod")
+        
+    # Step 3: Product filter apply kar 
+    if ex_prod != "All": 
+        exec_df = exec_df[exec_df["Product"] == ex_prod]
+        
+    with sl4:
+        av_colors = ["All"] + sorted(exec_df["Color"].dropna().unique().tolist())
+        ex_color = st.selectbox("Filter Color", av_colors, key="ex_color")
+        
+    # Step 4: Color filter apply kar
+    if ex_color != "All": 
+        exec_df = exec_df[exec_df["Color"] == ex_color]
+        st.divider()
+    
+    # 2. ACTIONABLE KPIs
+    if exec_df.empty:
+        st.warning("No data found for these filters.")
+    else:
+        gross = exec_df.loc[exec_df["Quantity"] > 0, "Quantity"].sum()
+        returns = exec_df.loc[exec_df["Quantity"] < 0, "Quantity"].sum()
+        net = gross + returns
+        
+        k1, k2, k3 = st.columns(3)
+        k1.metric("Gross Units Sold", f"{gross:,.0f}")
+        k2.metric("Units Returned", f"{returns:,.0f}")
+        k3.metric("Net Units", f"{net:,.0f}")
+        
+        st.divider()
+        
+        # 3. DONUT CHART (All Stores)
+        st.markdown("##### 🍩 Store Sales Distribution")
+        
+        # Chart ke liye sirf positive sales ko count karenge
+        sales_only = exec_df[exec_df["Quantity"] > 0]
+        if not sales_only.empty:
+            store_agg = sales_only.groupby("Store Name", as_index=False)["Quantity"].sum()
+            all_stores = store_agg.sort_values("Quantity", ascending=False) # Top 5 limit dɔn pul kɔmɔt
+            
+            fig = px.pie(
+                all_stores, 
+                values='Quantity', 
+                names='Store Name', 
+                hole=0.5,
+                title="All Stores Sales (Filtered)",
+                color_discrete_sequence=px.colors.qualitative.Bold # Brayt kɔlɔ dɛn
+            )
+            fig.update_traces(textposition='inside', textinfo='percent+label+value')
+            st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.info("No positive sales data available to plot.")
