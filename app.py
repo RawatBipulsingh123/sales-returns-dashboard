@@ -1240,3 +1240,117 @@ with tabs[-1]:
             st.plotly_chart(fig, use_container_width=True)
         else:
             st.info("No positive sales data available to plot.")
+
+
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# ---------------------------------------------------------
+# NEW ADVANCED TAB: Salesman ROI & Profitability
+# ---------------------------------------------------------
+with tabs[-1]: 
+    st.markdown("### 💸 Salesman ROI & Profitability Analysis")
+    
+    # 1. Base Data Rescue Logic
+    roi_df_base = df_processed.copy()
+    advanced_cols = ['Mrp', 'WSP', 'Amount', 'Salesman']
+    try:
+        for col in advanced_cols:
+            if col in df_raw.columns and col not in roi_df_base.columns:
+                roi_df_base = roi_df_base.join(df_raw[[col]])
+    except NameError:
+        pass
+        
+    missing = [c for c in advanced_cols if c not in roi_df_base.columns]
+    
+    if missing:
+        st.error(f"⚠️ Missing Columns: {', '.join(missing)}")
+        st.info("Make sure your Excel file has exact column names: 'Mrp', 'WSP', 'Amount', 'Salesman'.")
+    else:
+        # Pre-process base math for Global Metrics
+        for col in ['Mrp', 'WSP', 'Amount', 'Quantity']:
+            roi_df_base[col] = pd.to_numeric(roi_df_base[col], errors='coerce').fillna(0)
+            
+        roi_df_base['Total Cost'] = roi_df_base['WSP'] * roi_df_base['Quantity']
+        roi_df_base['Gross Margin'] = roi_df_base['Amount'] - roi_df_base['Total Cost']
+        roi_df_base['Discount Given'] = (roi_df_base['Mrp'] * roi_df_base['Quantity']) - roi_df_base['Amount']
+        
+        # --- GLOBAL OVERVIEW (Static) ---
+        st.markdown("##### 🌍 Global Company Overview (All Data)")
+        g1, g2, g3, g4 = st.columns(4)
+        g_sales = roi_df_base['Amount'].sum()
+        g_cost = roi_df_base['Total Cost'].sum()
+        g_margin = roi_df_base['Gross Margin'].sum()
+        g_margin_pct = (g_margin / g_sales * 100) if g_sales > 0 else 0
+        
+        g1.metric("Total Company Revenue", f"₹{g_sales:,.0f}")
+        g2.metric("Total Company Cost", f"₹{g_cost:,.0f}")
+        g3.metric("Global Gross Margin", f"₹{g_margin:,.0f}", f"{g_margin_pct:.1f}%")
+        g4.metric("Total Discount Leaked", f"₹{roi_df_base['Discount Given'].sum():,.0f}")
+        
+        st.divider()
+
+        # --- CASCADING SLICERS ---
+        st.markdown("##### ⚙️ Advanced Filters for Deep Dive")
+        f1, f2 = st.columns(2)
+        roi_df_filtered = roi_df_base.copy() # Create a copy for filtering
+        
+        with f1:
+            store_col = 'Store Name' if 'Store Name' in roi_df_filtered.columns else ('StoreName' if 'StoreName' in roi_df_filtered.columns else None)
+            if store_col:
+                av_stores = sorted(roi_df_filtered[store_col].dropna().astype(str).unique().tolist())
+                sel_stores = st.multiselect("Filter by Store", av_stores, key="roi_store")
+                if sel_stores:
+                    roi_df_filtered = roi_df_filtered[roi_df_filtered[store_col].isin(sel_stores)]
+            else:
+                st.warning("Store column not mapped for filtering.")
+                
+        with f2:
+            av_salesman = sorted(roi_df_filtered['Salesman'].dropna().astype(str).unique().tolist())
+            sel_salesman = st.multiselect("Filter by Salesman", av_salesman, key="roi_salesman")
+            if sel_salesman:
+                roi_df_filtered = roi_df_filtered[roi_df_filtered['Salesman'].isin(sel_salesman)]
+
+        st.divider()
+        
+        # --- FILTERED OVERVIEW (Dynamic) ---
+        st.markdown("##### 🎯 Selection Overview")
+        if roi_df_filtered.empty:
+             st.warning("No data found for this selection.")
+        else:
+            k1, k2, k3, k4 = st.columns(4)
+            f_sales = roi_df_filtered['Amount'].sum()
+            f_cost = roi_df_filtered['Total Cost'].sum()
+            f_margin = roi_df_filtered['Gross Margin'].sum()
+            f_margin_pct = (f_margin / f_sales * 100) if f_sales > 0 else 0
+            
+            k1.metric("Filtered Revenue", f"₹{f_sales:,.0f}")
+            k2.metric("Filtered Cost", f"₹{f_cost:,.0f}")
+            k3.metric("Filtered Margin", f"₹{f_margin:,.0f}", f"{f_margin_pct:.1f}%")
+            k4.metric("Filtered Discount", f"₹{roi_df_filtered['Discount Given'].sum():,.0f}")
+            
+            st.divider()
+            
+            # --- LEADERBOARD (Dynamic based on filters) ---
+            st.markdown("##### 🏆 Salesman Leaderboard (By Profitability)")
+            
+            salesman_agg = roi_df_filtered.groupby('Salesman', as_index=False).agg(
+                Units_Sold=('Quantity', 'sum'),
+                Total_Revenue=('Amount', 'sum'),
+                Gross_Margin=('Gross Margin', 'sum'),
+                Discount_Given=('Discount Given', 'sum')
+            ).sort_values('Gross_Margin', ascending=False)
+            
+            try:
+                styled_df = salesman_agg.style.format({
+                    'Total_Revenue': '₹{:,.2f}', 
+                    'Gross_Margin': '₹{:,.2f}', 
+                    'Discount_Given': '₹{:,.2f}'
+                }).map(lambda x: 'color: #C00000; font-weight: bold' if x < 0 else 'color: #28a745; font-weight: bold', subset=['Gross_Margin'])
+            except AttributeError:
+                styled_df = salesman_agg.style.format({
+                    'Total_Revenue': '₹{:,.2f}', 
+                    'Gross_Margin': '₹{:,.2f}', 
+                    'Discount_Given': '₹{:,.2f}'
+                }).applymap(lambda x: 'color: #C00000; font-weight: bold' if x < 0 else 'color: #28a745; font-weight: bold', subset=['Gross_Margin'])
+                
+            st.dataframe(styled_df, use_container_width=True)
