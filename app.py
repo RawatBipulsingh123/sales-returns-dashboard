@@ -806,10 +806,18 @@ with tabs[len(years) + 6]:
 with tabs[len(years) + 7]:
     st.markdown("### 🚫 Toxic Product Radar")
     tox_df = df_processed.copy()
+    
+    # 🔴 SMART RESCUE LOGIC: Raw file se 'Amount' wapas lana
+    try:
+        if 'Amount' in df_raw.columns and 'Amount' not in tox_df.columns:
+            tox_df = tox_df.join(df_raw[['Amount']])
+    except NameError:
+        pass
+
     if all(col in tox_df.columns for col in ['Product', 'Quantity', 'Amount']):
         for col in ['Quantity', 'Amount']: tox_df[col] = pd.to_numeric(tox_df[col], errors='coerce').fillna(0)
 
-        sel_tox_store = st.selectbox("Store Selection", ["All"] + sorted(tox_df['Store Name'].dropna().unique().tolist()))
+        sel_tox_store = st.selectbox("Store Selection", ["All"] + sorted(tox_df['Store Name'].dropna().unique().tolist()), key="tox_store_sel")
         if sel_tox_store != "All": tox_df = tox_df[tox_df['Store Name'] == sel_tox_store]
 
         sales_data = tox_df[tox_df['Quantity'] > 0].groupby('Product', as_index=False).agg(Units_Sold=('Quantity', 'sum'), Gross_Revenue=('Amount', 'sum'))
@@ -827,7 +835,7 @@ with tabs[len(years) + 7]:
         else:
             st.success("No high-return toxic products found.")
     else:
-        st.error("Missing columns for this analysis.")
+        st.error("⚠️ Missing columns for this analysis. Make sure your raw file has an 'Amount' column.")
 
 # --------------------------------------------------------------------------
 # Sidebar Export
