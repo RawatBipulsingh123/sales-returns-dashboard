@@ -421,7 +421,7 @@ if dropped_rows > 0:
     st.info(f"ℹ️ {dropped_rows:,} row(s) were excluded due to missing or invalid dates.")
 
 years = sorted(df_processed["Year"].unique().tolist())
-tab_labels = [str(y) for y in years] + ["Overall", "🔍 Item Search", "🔨 Custom Visualizations", "📦 Stock vs Sales", "📈 Day Trends", "📊 Executive KPI"]
+tab_labels = [str(y) for y in years] + ["Overall", "🔍 Item Search", "🔨 Custom Visualizations", "📦 Stock vs Sales", "📈 Day Trends", "📊 Executive KPI", "🚫 Toxic Product Radar"]
 tabs = st.tabs(tab_labels)
 
 excel_aggregation_data = {}
@@ -1354,3 +1354,97 @@ with tabs[-1]:
                 }).applymap(lambda x: 'color: #C00000; font-weight: bold' if x < 0 else 'color: #28a745; font-weight: bold', subset=['Gross_Margin'])
                 
             st.dataframe(styled_df, use_container_width=True)
+
+# ---------------------------------------------------------
+# NEW ADVANCED TAB: Toxic Product Radar (Return Analytics)
+# ---------------------------------------------------------
+with tabs[-1]: # Apna naya tab index theek se set kar lena
+    st.markdown("### 🚫 Toxic Product Radar (Return Rate Analytics)")
+    st.markdown("Identify high-return products bleeding your margins via logistics and handling costs.")
+
+    # Base dataframe for returns logic
+    tox_df = df_processed.copy()
+    
+    # Check if necessary columns exist
+    if all(col in tox_df.columns for col in ['Product', 'Quantity', 'Amount']):
+        # Ensure numerical values
+        for col in ['Quantity', 'Amount']:
+            tox_df[col] = pd.to_numeric(tox_df[col], errors='coerce').fillna(0)
+
+        # Basic Filter
+        st.markdown("##### ⚙️ Filter Category")
+        av_tox_stores = ["All"] + sorted(tox_df['Store Name'].dropna().unique().tolist()) if 'Store Name' in tox_df.columns else ["All"]
+        sel_tox_store = st.selectbox("Store Selection", av_tox_stores, key="tox_store_sel")
+        
+        if sel_tox_store != "All" and 'Store Name' in tox_df.columns:
+            tox_df = tox_df[tox_df['Store Name'] == sel_tox_store]
+
+        # Core Backend Mathematics for Returns
+        # Fresh Sales (Qty > 0) vs Returns (Qty < 0)
+        sales_data = tox_df[tox_df['Quantity'] > 0].groupby('Product', as_index=False).agg(
+            Units_Sold=('Quantity', 'sum'),
+            Gross_Revenue=('Amount', 'sum')
+        )
+        
+        returns_data = tox_df[tox_df['Quantity'] < 0].groupby('Product', as_index=False).agg(
+            Units_Returned=('Quantity', 'sum'),
+            Revenue_Lost=('Amount', 'sum')
+        )
+        
+        # Absolute values for returns
+        returns_data['Units_Returned'] = returns_data['Units_Returned'].abs()
+        returns_data['Revenue_Lost'] = returns_data['Revenue_Lost'].abs()
+
+        # Merge and calculate Return Rate %
+        toxic_agg = pd.merge(sales_data, returns_data, on='Product', how='outer').fillna(0)
+        
+        # Avoid division by zero
+        toxic_agg['Return_Rate_%'] = toxic_agg.apply(
+            lambda row: (row['Units_Returned'] / row['Units_Sold'] * 100) if row['Units_Sold'] > 0 else (100 if row['Units_Returned'] > 0 else 0),
+            axis=1
+        )
+        
+        # Calculate Net impact
+        toxic_agg['Net_Units'] = toxic_agg['Units_Sold'] - toxic_agg['Units_Returned']
+        toxic_agg['Net_Revenue'] = toxic_agg['Gross_Revenue'] - toxic_agg['Revenue_Lost']
+
+        st.divider()
+
+        # KPIs
+        st.markdown("##### 📉 Overall Return Impact")
+        r1, r2, r3 = st.columns(3)
+        total_units_returned = toxic_agg['Units_Returned'].sum()
+        total_revenue_lost = toxic_agg['Revenue_Lost'].sum()
+        overall_return_rate = (total_units_returned / toxic_agg['Units_Sold'].sum() * 100) if toxic_agg['Units_Sold'].sum() > 0 else 0
+
+        r1.metric("Total Units Returned", f"{total_units_returned:,.0f}")
+        r2.metric("Total Revenue Lost (Returns)", f"₹{total_revenue_lost:,.0f}")
+        r3.metric("Overall Return Rate", f"{overall_return_rate:.2f}%")
+
+        st.divider()
+
+        # The Toxic List (Sorted by highest return rate, minimum 5 units sold to avoid noise)
+        st.markdown("##### 🚩 High-Risk Products (Minimum 5 Sales)")
+        
+        # Filter out noise: only show products that actually sold something significant before judging
+        filtered_toxic = toxic_agg[toxic_agg['Units_Sold'] >= 5].sort_values('Return_Rate_%', ascending=False)
+
+        if not filtered_toxic.empty:
+            # Highlight products with > 20% return rate in stark RED
+            try:
+                styled_tox = filtered_toxic[['Product', 'Units_Sold', 'Units_Returned', 'Return_Rate_%', 'Revenue_Lost']].style.format({
+                    'Return_Rate_%': '{:.1f}%',
+                    'Revenue_Lost': '₹{:,.0f}'
+                }).map(lambda x: 'color: #FFFFFF; background-color: #8B0000; font-weight: bold' if pd.notna(x) and x > 20 else '', subset=['Return_Rate_%'])
+            except AttributeError:
+                styled_tox = filtered_toxic[['Product', 'Units_Sold', 'Units_Returned', 'Return_Rate_%', 'Revenue_Lost']].style.format({
+                    'Return_Rate_%': '{:.1f}%',
+                    'Revenue_Lost': '₹{:,.0f}'
+                }).applymap(lambda x: 'color: #FFFFFF; background-color: #8B0000; font-weight: bold' if pd.notna(x) and x > 20 else '', subset=['Return_Rate_%'])
+            
+            st.dataframe(styled_tox, use_container_width=True)
+        else:
+            st.success("✅ No toxic products found with significant sales volume.")
+            
+    else:
+        st.error("Missing critical columns: 'Product', 'Quantity', or 'Amount'. Check mapping.")
