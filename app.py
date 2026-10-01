@@ -391,6 +391,8 @@ with tabs[len(years)]:
     render_kpis(df_processed)
     st.divider()
     excel_aggregation_data["Overall"] = render_aggregation_section(df_processed, "overall")
+    st.divider()
+    render_download_btn(df_processed, "Overall_Data.csv", "📥 Download Overall Raw Data")
 
 # 3. Item Search Tab
 with tabs[len(years) + 1]:
@@ -516,6 +518,8 @@ with tabs[len(years) + 1]:
         ledger_df = search_df[["Date", "Store Name", "Product", "EANCode", "Quantity"]].copy().sort_values(by="Date", ascending=False)
         ledger_df["Date"] = ledger_df["Date"].dt.strftime('%d-%m-%Y')
         st.dataframe(ledger_df.reset_index(drop=True), use_container_width=True)
+        st.divider()
+        render_download_btn(ledger_df, "Master_Ledger.csv", "📥 Download Detailed Ledger (CSV)")
 
 # 4. Custom Visualizations Tab
 with tabs[len(years) + 2]:
@@ -675,6 +679,62 @@ with tabs[len(years) + 3]:
                         df_size = generate_table(item_sales_ui, item_stock_ui, "Size")
                         if df_size is not None: st.dataframe(df_size, use_container_width=True)
                     st.divider()
+                
+                # --- Multi-Sheet Excel Engine ---
+                if 'df_store' in locals() and df_store is not None:
+                    try:
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+                            workbook = writer.book
+                            fmt_head = workbook.add_format({'bg_color': '#4F81BD', 'font_color': 'white', 'bold': True, 'border': 1})
+                            fmt_pct = workbook.add_format({'num_format': '0.00%', 'border': 1})
+                            fmt_tot = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1})
+                            fmt_norm = workbook.add_format({'border': 1})
+                            fmt_title = workbook.add_format({'bold': True, 'font_size': 14, 'font_color': '#1F4E78'})
+                            
+                            for item in items_to_display:
+                                item_s = filtered_sales if item == "All Products" else (filtered_sales[filtered_sales["Product"]==item] if search_mode=="Product Name" else filtered_sales[filtered_sales["EANCode"]==item])
+                                item_k = filtered_stock if item == "All Products" else (filtered_stock[filtered_stock["Product"].str.upper()==item.upper()] if search_mode=="Product Name" else filtered_stock[filtered_stock["EANCode"].str.upper()==item.upper()])
+                                
+                                i_store, i_color, i_size = generate_table(item_s, item_k, "Store Name"), generate_table(item_s, item_k, "Color"), generate_table(item_s, item_k, "Size")
+                                
+                                sheet_name = re.sub(r'[\\/*?:\[\]]', '', str(item))[:31]
+                                base_name, counter = sheet_name, 1
+                                while sheet_name in writer.sheets: sheet_name = base_name[:31-len(f"_{counter}")] + f"_{counter}"; counter += 1
+                                
+                                current_row = 0
+                                for title, t_df in {'Store Summary': i_store, 'Color Summary': i_color, 'Size Summary': i_size}.items():
+                                    if t_df is None or t_df.empty: continue
+                                    excel_df = t_df.copy() 
+                                    t_sales, t_stock = excel_df["Sales Qty"].sum(), excel_df["StockInHand"].sum() if "StockInHand" in excel_df else 0
+                                    tot_r = pd.DataFrame({excel_df.columns[0]: ["FINAL TOTAL"], "Sales Qty": [t_sales]})
+                                    if "StockInHand" in excel_df: tot_r["StockInHand"] = [t_stock]
+                                    if "Send Qty" in excel_df: tot_r["Send Qty"] = [t_sales + t_stock]
+                                    if "Return Qty" in excel_df: tot_r["Return Qty"] = [excel_df["Return Qty"].sum()]
+                                    if "Percentage" in excel_df: tot_r["Percentage"] = [f"{(t_sales / (t_sales + t_stock) * 100):.1f}%" if (t_sales + t_stock) > 0 else "0.0%"]
+                                    excel_df = pd.concat([excel_df, tot_r], ignore_index=True)
+                                    
+                                    ws = writer.sheets.get(sheet_name)
+                                    if not ws: ws = workbook.add_worksheet(sheet_name)
+                                    ws.write(current_row, 0, title, fmt_title); current_row += 1
+                                    excel_df.to_excel(writer, index=False, sheet_name=sheet_name, startrow=current_row)
+                                    for c_idx, val in enumerate(excel_df.columns): ws.write(current_row, c_idx, val, fmt_head)
+                                    
+                                    for r_idx in range(len(excel_df)):
+                                        for c_idx in range(len(excel_df.columns)):
+                                            c_name, v = excel_df.columns[c_idx], excel_df.iloc[r_idx, c_idx]
+                                            if "%" in c_name or c_name == "Percentage":
+                                                fmt = workbook.add_format({'bold': True, 'bg_color': '#D9D9D9', 'border': 1, 'num_format': '0.00%'}) if (r_idx == len(excel_df)-1) else fmt_pct
+                                                try: v = float(str(v).replace('%',''))/100.0 if '%' in str(v) else v
+                                                except: v = 0.0
+                                                ws.write(current_row + 1 + r_idx, c_idx, v, fmt)
+                                            else:
+                                                ws.write(current_row + 1 + r_idx, c_idx, v, fmt_tot if (r_idx == len(excel_df)-1) else fmt_norm)
+                                    current_row += len(excel_df) + 3 
+                                if sheet_name in writer.sheets: writer.sheets[sheet_name].set_column(0, 0, 35); writer.sheets[sheet_name].set_column(1, 10, 15)
+                        
+                        st.download_button(f"📥 Download Multi-Product Report ({len(items_to_display)} Sheets)", output.getvalue(), "Multi_Product_Stock_Report.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+                    except Exception as e: st.error(f"Excel generation error: {e}")
         except Exception as e:
             st.error(f"Error processing stock data: {e}")
 
@@ -706,6 +766,8 @@ with tabs[len(years) + 4]:
         fig.update_traces(texttemplate='%{text}', textposition='outside')
         fig.add_hline(y=plot_df["Quantity"].mean(), line_dash="dash", line_color="#C00000", annotation_text=f"Average: {plot_df['Quantity'].mean():.1f}")
         st.plotly_chart(fig, use_container_width=True)
+        st.divider()
+        render_download_btn(plot_df, "Trend_Analysis.csv", "📥 Download Day Trend Analytics")
 
 # 7. Executive KPI Tab
 with tabs[len(years) + 5]:
@@ -740,6 +802,8 @@ with tabs[len(years) + 5]:
         if not sales_only.empty:
             fig = px.pie(sales_only.groupby("Store Name", as_index=False)["Quantity"].sum(), values='Quantity', names='Store Name', hole=0.5)
             st.plotly_chart(fig, use_container_width=True)
+            st.divider()
+            render_download_btn(sales_only.groupby("Store Name", as_index=False)["Quantity"].sum(), "Executive_KPI.csv", "📥 Download KPI Store Distribution")
 
 # 8. Salesman ROI Tab
 with tabs[len(years) + 6]: 
@@ -808,6 +872,8 @@ with tabs[len(years) + 6]:
             ).sort_values('Gross_Margin', ascending=False)
             
             st.dataframe(salesman_agg.style.format({'Total_Revenue': '₹{:,.0f}', 'Gross_Margin': '₹{:,.0f}', 'Discount_Given': '₹{:,.0f}'}), use_container_width=True)
+            st.divider()
+            render_download_btn(salesman_agg, "Salesman_Profitability_ROI.csv", "📥 Download Salesman ROI Report")
 
 # 9. Toxic Product Radar Tab
 with tabs[len(years) + 7]:
@@ -839,6 +905,8 @@ with tabs[len(years) + 7]:
         filtered_toxic = toxic_agg[toxic_agg['Units_Sold'] >= 5].sort_values('Return_Rate_%', ascending=False)
         if not filtered_toxic.empty:
             st.dataframe(filtered_toxic[['Product', 'Units_Sold', 'Units_Returned', 'Return_Rate_%', 'Revenue_Lost']].style.format({'Return_Rate_%': '{:.1f}%', 'Revenue_Lost': '₹{:,.0f}'}), use_container_width=True)
+            st.divider()
+            render_download_btn(filtered_toxic, "Toxic_Product_Radar.csv", "📥 Download High-Risk Return Analytics")
         else:
             st.success("No high-return toxic products found.")
     else:
