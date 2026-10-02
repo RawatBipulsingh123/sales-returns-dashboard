@@ -603,6 +603,9 @@ with tabs[len(years) + 3]:
                 df_processed["Store Name"] = df_processed["Store Name"].astype(str).str.upper().str.strip()
                 df_stock["Store Name"] = df_stock["Store Name"].astype(str).str.upper().str.strip()
                 df_processed["Store Name"] = df_processed["Store Name"].apply(lambda n: re.sub(r'^(Ethnicity|EC)\s*-\s*', 'ET - ', n, flags=re.IGNORECASE).strip())
+                df_processed["Store Name"] = df_processed["Store Name"].replace({"LAKESHORE THANE": "VIVIANA THANE STORE", "VIVIANA MALL": "VIVIANA THANE STORE"})
+                df_stock["Store Name"] = df_stock["Store Name"].replace({"BSLAKESHORE": "VIVIANA THANE STORE"})
+                
                 
                 search_mode = st.radio("Search By:", ["Product Name", "EAN Code"], horizontal=True)
                 col1, col2 = st.columns(2)
